@@ -1,6 +1,6 @@
 {
-  "name": "Agendoro",
-  "short_name": "Agendoro",
+  "name": "NextPlanner",
+  "short_name": "NextPlanner",
   "description": "Agenda scolastica con impegni da circolari PDF, screenshot ed email.",
   "lang": "it",
   "start_url": "./",
