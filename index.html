@@ -659,7 +659,9 @@ input[type="number"] { font: inherit; font-weight: 500; color: var(--ink); backg
     var classesFound = [];
     clsLines.forEach(function (L) { L.cls.forEach(function (k) { if (classesFound.indexOf(k) < 0) classesFound.push(k); }); });
     classesFound.sort();
-    if (!clsLines.length) return { events: [], classes: [], missing: wanted, fixedYear: false, reason: 'Nessuna classe (per esempio 5J o 3A) trovata nel PDF.' };
+    // Se non ci sono classi, non interrompere l'analisi: una circolare può contenere
+    // un appuntamento generale (data + descrizione) senza destinatari/classe.
+    // In quel caso sentenceMode, più sotto, prova a riconoscere la data nel testo.
 
     // Blocchi: righe con classi vicine tra loro (una tabella, un elenco)
     var gaps = [];
@@ -775,6 +777,17 @@ input[type="number"] { font: inherit; font-weight: 500; color: var(--ink); backg
 
     var events = [], seenE = {};
     rows.forEach(function (r) {
+      // Circolare senza classi: crea un evento generico usando data, descrizione e orario OCR.
+      if (!classesFound.length) {
+        var genericKey = ['generico', iso(r.dt), r.tm.start, r.tm.end, r.desc].join('|');
+        if (!seenE[genericKey]) {
+          seenE[genericKey] = 1;
+          events.push({ title: r.desc || 'Appuntamento da circolare', date: iso(r.dt), time: r.tm.start,
+            endTime: r.tm.end, cls: '', description: r.desc, location: '', kind: 'impegno',
+            source: 'Circolare', note: 'Evento estratto automaticamente dalla circolare: verifica data e orario.' });
+        }
+        return;
+      }
       wanted.forEach(function (k) {
         if (r.cls.indexOf(k) < 0) return;
         var key = [k, iso(r.dt), r.tm.start, r.tm.end, r.desc].join('|');
@@ -787,9 +800,12 @@ input[type="number"] { font: inherit; font-weight: 500; color: var(--ink); backg
     var missing = wanted.filter(function (k) { return classesFound.indexOf(k) < 0; });
     return {
       events: events, classes: classesFound, missing: missing, fixedYear: fixedYear,
-      reason: events.length || !wanted.length ? '' :
-        (missing.length === wanted.length ? 'Classi non trovate nel PDF: ' + missing.join(', ') + '.' :
-          (undated ? 'Classe trovata ma senza una data riconoscibile nel PDF.' : 'Nessun impegno per le classi scelte.'))
+      reason: events.length ? '' :
+        (!classesFound.length
+          ? (undated ? 'Non è stata riconosciuta una data di appuntamento nel testo. Controlla che la data sia leggibile nello screenshot.' : 'Nessun appuntamento con una data riconoscibile trovato nella circolare.')
+          : (!wanted.length ? 'Seleziona una classe oppure verifica il testo della circolare.' :
+            (missing.length === wanted.length ? 'Classi non trovate nel PDF: ' + missing.join(', ') + '.' :
+              (undated ? 'Classe trovata ma senza una data riconoscibile nel PDF.' : 'Nessun impegno per le classi scelte.'))))
     };
   }
 
@@ -1423,7 +1439,7 @@ input[type="number"] { font: inherit; font-weight: 500; color: var(--ink); backg
     box.innerHTML = '<div class="meta">' + ico('doc') + '<span>' + esc(file.name) + '</span><span class="chip">' + Math.max(1, Math.round(file.size / 1024)) + ' KB</span></div>' +
       (isImg ? '<img class="shot" src="' + url + '" alt="Anteprima dello screenshot">' : '<iframe class="preview" id="pdf-frame" title="Anteprima circolare" src="' + url + '"></iframe>') +
       '<p class="note" id="pdf-ocr" hidden></p>' +
-      '<div class="f"><span>Classi da cercare (anche più di una)</span><div id="pdf-classes"></div></div>' +
+      '<div class="f"><span>Classi da cercare (facoltativo: se non le selezioni, l’app cerca gli appuntamenti generali)</span><div id="pdf-classes"></div></div>' +
       '<div class="actions-row"><button class="btn primary" id="pdf-run">' + ico('sync') + 'Estrai impegni</button></div>' +
       '<div id="pdf-result"></div>' +
       '<div class="actions-row"><button class="btn" id="pdf-add">' + ico('plus') + 'Aggiungi impegno a mano</button><a class="btn" href="' + url + '" target="_blank" rel="noopener">Apri in una nuova scheda</a></div>' +
@@ -1444,10 +1460,11 @@ input[type="number"] { font: inherit; font-weight: 500; color: var(--ink); backg
     $('pdf-add').addEventListener('click', function () { openForm({ title: 'Circolare: ' + name, source: 'Circolare', note: 'Allegato: ' + file.name, date: iso(addDays(1)) }); });
     $('pdf-run').addEventListener('click', function () {
       var cls = selected.slice(), res = $('pdf-result');
-      if (!cls.length) { res.innerHTML = '<p class="warn">Aggiungi almeno una classe (es. 5J).</p>'; return; }
       res.innerHTML = '<p>Analisi della circolare in corso…</p>';
       var job;
-      if (settings.endpoint && !isImg) {
+      // L'analisi cloud per classe resta disponibile; se non è stata scelta una classe
+      // (o se si carica uno screenshot), usa il parser OCR locale e prova anche la modalità generica.
+      if (settings.endpoint && !isImg && cls.length) {
         job = fileToBase64(file).then(function (b64) {
           return Promise.all(cls.map(function (c) {
             return callEndpoint({ mode: 'pdf', targetClass: c, filename: file.name, pdfBase64: b64 }).then(function (r) {
@@ -1461,7 +1478,11 @@ input[type="number"] { font: inherit; font-weight: 500; color: var(--ink); backg
           return { events: ev, missing: miss, reason: ev.length ? '' : (list[0] && list[0].r.reason) || 'Nessun impegno trovato.' };
         });
       } else {
-        job = getItems().then(function (its) { return AP.parseCircolare(its, cls); });
+        job = getItems().then(function (its) {
+          var detected = AP.parseCircolare(its, []);
+          var targets = cls.length ? cls : (detected.classes || []);
+          return targets.length ? AP.parseCircolare(its, targets) : detected;
+        });
       }
       job.then(function (r) {
         var t0 = iso(today), all = r.events.length;
@@ -2020,3 +2041,4 @@ input[type="number"] { font: inherit; font-weight: 500; color: var(--ink); backg
 </script>
 
 </body></html>
+
