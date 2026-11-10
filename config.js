@@ -1,7 +1,7 @@
 /* Impostazioni pubbliche dell'app. Sono visibili a chiunque apra il sito: il Client ID di Google NON è un segreto
    (funziona solo dalle origini autorizzate nella Google Cloud Console). Non metterci password. */
 window.APP_CONFIG = {
-  "clientId": "1078698863433-mm8sltr75manvaolilubkvbsjk7scj48.apps.googleusercontent.com",
+  "clientId": "515566720859-algvmj0rkcfprb9pbq7qdcp316k7jov3.apps.googleusercontent.com",
   "endpoint": "",
   "apiKey": "",
   "emailToCloud": false,
